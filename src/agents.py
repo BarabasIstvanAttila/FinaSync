@@ -10,6 +10,7 @@ from tools import (
     save_financial_finding,
     get_financial_findings
 )
+from utils import get_project_root
 
 # --- FIX: Robust Imports for MCP ---
 McpTool = None
@@ -56,38 +57,66 @@ def create_fina_sync_agent():
 
     # --- MCP Tool Setup (Google Drive) ---
     google_drive_tool = None
-    if McpTool:
+    if McpTool and StdioServerParameters:
         try:
-            # 1. Define the connection parameters
-            # We use the typed object if available, otherwise a dictionary
-            cmd = "npx"
-            args = ["-y", "@modelcontextprotocol/server-google-drive"]
-            env = os.environ.copy()
-
-            if StdioServerParameters:
-                server_params = StdioServerParameters(command=cmd, args=args, env=env)
+            # Get the project root for credentials path
+            project_root = get_project_root()
+            credentials_path = os.path.join(project_root, ".gdrive-server-credentials.json")
+            
+            # Verify credentials exist
+            if not os.path.exists(credentials_path):
+                print(f"⚠️ Google Drive credentials not found at: {credentials_path}")
+                print("👉 Run: npx -y @modelcontextprotocol/server-gdrive auth")
             else:
-                server_params = {"command": cmd, "args": args, "env": env}
+                # 1. Define the connection parameters matching .vscode/mcp.json
+                cmd = "npx"
+                args = ["-y", "@modelcontextprotocol/server-gdrive"]
+                
+                # Set up environment with credentials path
+                env = os.environ.copy()
+                env["GDRIVE_CREDENTIALS_PATH"] = credentials_path
 
-            # 2. Robust Initialization Strategy (Try-Chain)
-            # We attempt different parameter names used by different ADK versions
-            try:
-                # Modern ADK usage
-                google_drive_tool = McpTool(connection_params=server_params, name="google_drive")
-            except TypeError:
+                # 2. Create StdioServerParameters
+                server_params = StdioServerParameters(
+                    command=cmd, 
+                    args=args, 
+                    env=env
+                )
+
+                # 3. Initialize McpTool with connection params
                 try:
-                    # Alternative ADK usage
-                    google_drive_tool = McpTool(server_params=server_params, name="google_drive")
+                    # Modern ADK usage
+                    google_drive_tool = McpTool(
+                        connection_params=server_params, 
+                        name="google_drive"
+                    )
                 except TypeError:
-                    # Legacy/Direct usage
-                    google_drive_tool = McpTool(command=cmd, args=args, env=env, name="google_drive")
+                    try:
+                        # Alternative ADK usage
+                        google_drive_tool = McpTool(
+                            server_params=server_params, 
+                            name="google_drive"
+                        )
+                    except TypeError:
+                        # Fallback: Pass params directly
+                        google_drive_tool = McpTool(
+                            command=cmd, 
+                            args=args, 
+                            env=env, 
+                            name="google_drive"
+                        )
 
-            print("✅ MCP Tool 'google_drive' initialized.")
+                print("✅ MCP Tool 'google_drive' initialized.")
+                print(f"   Using credentials: {credentials_path}")
 
         except Exception as e:
             print(f"⚠️ Failed to initialize MCP Tool: {e}")
             print("ℹ️ Continuing without Google Drive support.")
             google_drive_tool = None
+    elif McpTool and not StdioServerParameters:
+        print("⚠️ MCP library missing StdioServerParameters. Install with: pip install mcp")
+    else:
+        print("ℹ️ MCP Tool not available. Google Drive features disabled.")
 
     # --- 1. Investment Analyst Agent ---
     investment_agent = LlmAgent(
@@ -150,12 +179,14 @@ def create_fina_sync_agent():
         MANDATORY ACTIONS (Do not skip):
         3. Call `generate_financial_chart` using the extracted numbers (even if they are 0).
         4. IF the Google Drive tool is available:
-           - Upload the chart image ('financial_snapshot.png') to the 'Financial Reports' folder.
-           - Upload a text summary of the report to the same folder.
+           - Use gdrive_search to find or verify a 'Financial Reports' folder.
+           - Use gdrive_read_file to check existing reports if needed.
+           - Upload the chart image ('financial_snapshot.png') to Google Drive.
+           - Create a text summary report and upload it as well.
         
         Final Output: 
         - Confirm the chart was generated.
-        - Confirm if the upload was successful.
+        - Confirm if the Google Drive upload was successful (or skipped if unavailable).
         - Provide the financial summary.
         """
     )

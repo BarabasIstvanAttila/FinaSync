@@ -209,5 +209,10 @@ __marimo__/
 #Secrets
 .env
 
+# Google Drive MCP credentials
+.gdrive-server-credentials.json
+gcp-oauth.keys.json
+
 #DB
 *.db
+/node_modules/
