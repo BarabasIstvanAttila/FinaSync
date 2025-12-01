@@ -1,7 +1,16 @@
 import os
-from google.adk.agents import LlmAgent
+# Added SequentialAgent to imports
+from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.models.google_llm import Gemini
-from tools import read_excel_transactions, read_csv_transactions, read_pdf_content, get_current_stock_price
+from tools import (
+    read_excel_transactions, 
+    read_csv_transactions, 
+    read_pdf_content, 
+    get_current_stock_price,
+    generate_financial_chart,
+    update_monthly_cache,
+    get_monthly_cache
+)
 
 # --- Authentication Setup ---
 if "GOOGLE_API_KEY" not in os.environ:
@@ -15,68 +24,81 @@ MODEL_NAME = "gemini-2.5-flash-lite"
 
 def create_fina_sync_agent():
     """
-    Factory function to create the agent hierarchy.
-    Returns the root 'Dispatcher' agent.
+    Factory function to create the agent hierarchy using a Sequential Pipeline.
+    Order: Investment -> Expense -> CFO.
+    Returns the root 'SequentialAgent'.
     """
     
-    # --- 1. Expense Analyst Agent ---
-    expense_agent = LlmAgent(
-        name="ExpenseAnalyst",
-        model=Gemini(model=MODEL_NAME),
-        tools=[read_excel_transactions, read_csv_transactions],
-        instruction="""
-        You are an expert Expense Analyst.
-        Your goal is to analyze transaction data from Excel or CSV files.
-        
-        When given a file path:
-        1. Check the file extension. 
-           - If .xlsx/.xls, use `read_excel_transactions`.
-           - If .csv, use `read_csv_transactions`.
-        2. Check the tool output:
-           - If 'status' is 'error', report the error message to the user.
-           - If 'status' is 'success', proceed with the 'data' field.
-        3. Group expenses by 'Category' and calculate the total sum for each.
-        4. Identify the highest spending category.
-        5. Return a structured summary of Total Spend and Breakdown by Category.
-        """
-    )
-    
-    # --- 2. Investment Analyst Agent ---
+    gemini_model = Gemini(model=MODEL_NAME)
+
+    # --- 1. Investment Analyst Agent (Step 1) ---
+    # Writes directly to cache. Passes file path to next agent.
     investment_agent = LlmAgent(
         name="InvestmentAnalyst",
-        model=Gemini(model=MODEL_NAME),
-        tools=[read_pdf_content, get_current_stock_price],
+        model=gemini_model,
+        tools=[read_pdf_content, get_current_stock_price, update_monthly_cache],
         instruction="""
-        You are a Senior Investment Analyst.
-        Your goal is to analyze brokerage statements (PDFs) and verify valuations.
+        You are Step 1 in the financial pipeline: Investment Analysis.
         
-        When given a file path:
-        1. Use `read_pdf_content` to extract text from the report.
-           - If 'status' is 'error', stop and report the issue.
-        2. Identify stock tickers and quantity of shares held (e.g., "10 shares of AAPL").
-        3. IMPORTANT: For every ticker found, use `get_current_stock_price`.
-           - Check if 'status' is 'success' before using the price.
-        4. Calculate the total current portfolio value based on live prices.
-        5. Compare this to the 'Cost Basis' or previous value found in the PDF if available.
+        Task:
+        1. Identify the file path in the user's request.
+        2. Check if the file is a PDF (.pdf).
+           - YES: Use `read_pdf_content`. Identify tickers/shares. Calculate Portfolio Value.
+             Then call `update_monthly_cache(category='investments', summary=...)`.
+           - NO: Do nothing regarding analysis.
+        
+        CRITICAL OUTPUT RULE: 
+        Regardless of whether you processed the file or not, you MUST end your response by repeating the file path so the next agent can use it.
+        Format: "Step 1 Complete. Passing file: <file_path>"
         """
     )
-    
-    # --- 3. The Dispatcher (Root Agent) ---
-    dispatcher_agent = LlmAgent(
-        name="Dispatcher",
-        model=Gemini(model=MODEL_NAME),
-        sub_agents=[expense_agent, investment_agent],
+
+    # --- 2. Expense Analyst Agent (Step 2) ---
+    # Writes directly to cache.
+    expense_agent = LlmAgent(
+        name="ExpenseAnalyst",
+        model=gemini_model,
+        tools=[read_excel_transactions, read_csv_transactions, update_monthly_cache],
         instruction="""
-        You are the FinaSync Concierge Dispatcher.
-        Your job is to receive new files and route them to the correct specialist.
+        You are Step 2 in the financial pipeline: Expense Analysis.
         
-        RULES:
-        - If the file is an Excel (.xlsx) OR CSV (.csv) -> Delegate to 'ExpenseAnalyst'.
-        - If the file is a PDF -> Delegate to 'InvestmentAnalyst'.
-        - If the file type is unknown, reply with "File type not supported."
+        Task:
+        1. Look at the input text from the previous agent to find the "Passing file: <file_path>" section.
+        2. Check if that file is an Excel (.xlsx) or CSV (.csv).
+           - YES: Use `read_excel_transactions` or `read_csv_transactions`. Analyze Total Spend.
+             Then call `update_monthly_cache(category='expenses', summary=...)`.
+           - NO: Do nothing regarding analysis.
         
-        Always summarize the findings returned by the sub-agents into a final one-sentence confirmation for the user.
+        Output: Confirm that Step 2 is done and the cache is updated.
         """
     )
+
+    # --- 3. CFO (Step 3) ---
+    # Reads the cache and reports.
+    cfo_agent = LlmAgent(
+        name="CFO",
+        model=gemini_model,
+        tools=[generate_financial_chart, get_monthly_cache],
+        instruction="""
+        You are Step 3: The Chief Financial Officer (CFO).
+        
+        Task:
+        1. The previous agents have already populated the cache.
+        2. Call `get_monthly_cache` to retrieve the FULL monthly picture (Expenses + Investments).
+        3. Parse the data from the cache:
+           - Extract Total Expenses.
+           - Extract Total Stock Value.
+           - Calculate Savings (Income - Expenses). Assume Income $5000 if unknown.
+        4. Call `generate_financial_chart` with these numbers.
+        5. Write a final monthly snapshot report and provide the chart path.
+        """
+    )
+
+    # --- 4. Root Pipeline (Sequential) ---
+    # Executes the agents strictly in order.
+    pipeline_agent = SequentialAgent(
+        name="FinaSyncPipeline",
+        sub_agents=[investment_agent, expense_agent, cfo_agent]
+    )
     
-    return dispatcher_agent
+    return pipeline_agent
