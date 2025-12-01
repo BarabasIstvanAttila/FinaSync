@@ -1,0 +1,48 @@
+@startuml Financial System Architecture
+!theme plain
+skinparam componentStyle uml2
+
+actor "User" as user
+database "SQLite Session DB\n(Persistent State)" as db
+cloud "Google Drive\n(MCP Server)" as gdrive
+
+package "FinaSync Pipeline (Sequential)" {
+    component "1. Investment Analyst" as inv_agent
+    component "2. Expense Analyst" as exp_agent
+    component "3. CFO Agent" as cfo_agent
+}
+
+package "Tools & Services" {
+    component "PDF Reader" as pdf_tool
+    component "Stock Price API" as stock_tool
+    component "Excel/CSV Reader" as excel_tool
+    component "Chart Generator" as chart_tool
+    component "MCP Client" as mcp_tool
+}
+
+' Workflow Flow
+user -> inv_agent : 1. Submit File Path
+inv_agent -> exp_agent : 2. Pass File Path
+exp_agent -> cfo_agent : 3. Pass Control
+
+' Investment Analyst Interactions
+inv_agent -down-> pdf_tool : Uses
+inv_agent -down-> stock_tool : Uses
+inv_agent -down-> db : Saves 'financial:investments'
+
+' Expense Analyst Interactions
+exp_agent -down-> excel_tool : Uses
+exp_agent -down-> db : Saves 'financial:expenses'
+
+' CFO Agent Interactions
+cfo_agent -up-> db : Reads All Financial Data
+cfo_agent -down-> chart_tool : Generates Chart
+cfo_agent -down-> mcp_tool : Uploads Report
+mcp_tool -right-> gdrive : Syncs Files
+
+note right of db
+  Shared Memory
+  (Expenses + Investments)
+end note
+
+@enduml
