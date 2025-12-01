@@ -208,3 +208,6 @@ __marimo__/
 
 #Secrets
 .env
+
+#DB
+*.db
