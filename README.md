@@ -1,5 +1,15 @@
 # FinaSync
-Financial Report Analysis ADK Project
+FinaSync: The Personal Wealth Concierge -- Financial Report Analysis ADK Project
+
+Managing personal finances is fragmented and time-consuming. My financial data is siloed: expense logs exist in Excel, bank statements are in PDF, and stock portfolio performance is locked in monthly brokerage reports. Manually extracting this data to calculate a simple "Monthly Net Worth" or "Savings Rate" takes hours of data entry and is prone to human error.
+
+ FinaSync is an automated Concierge Agent pipeline. It listens to a specific Google Drive folder, automatically detects new financial documents (PDF/Excel), and deploys specialized sub-agents to extract data, categorize expenses, and analyze stock performance against historical benchmarks. It creates a unified "Monthly Snapshot" and saves the consolidated state, reducing hours of work to zero minutes.
+
+ Instead of one massive agent trying to do everything, break it down into a coordinated team. This is more robust and easier to debug.
+* 1. The Dispatcher (Orchestrator): Triggers when files appear. It opens the file just enough to classify it (e.g., "This is a Bank Statement" vs. "This is a Stock Report") and routes it to the correct sub-agent.
+* 2. The Expense Analyst: specialized in extracting transaction rows from PDFs/Excels and categorizing them (Groceries, Utilities, etc.).
+* 3. The Investment Analyst: specialized in reading stock tickers and quantities from brokerage reports. It can also fetch current market data to verify valuations.
+* 4. The CFO (Synthesis Agent): Receives structured data from the Expense and Investment agents. It calculates the final totals (Income - Expenses = Savings) and generates the report.
 
 This codebase is written in Python, uses Google AI Studio and Google Cloud
 
